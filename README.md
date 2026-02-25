@@ -60,6 +60,9 @@ GITHUB_PATH1 = "1"
 GITHUB_PATH1_NAME = "1路径描述"
 GITHUB_PATH2 = "2"
 GITHUB_PATH2_NAME = "2路径描述"
+# 登录认证配置
+LOGIN_USERNAME = "admin"
+LOGIN_PASSWORD = "password123"
 ```
 
 ### Cloudflare环境变量
