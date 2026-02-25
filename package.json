@@ -1,0 +1,16 @@
+{
+  "name": "github-file-manager",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for managing GitHub repository files",
+  "main": "index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

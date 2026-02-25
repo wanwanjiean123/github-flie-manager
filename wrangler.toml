@@ -1,0 +1,31 @@
+name = "github-file-manager"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+# 环境变量配置
+[vars]
+GITHUB_TOKEN = "ghp_token"
+GITHUB_OWNER = "github_username"
+GITHUB_REPO = "repo"
+GITHUB_BRANCH = "main"
+GITHUB_PATH1 = "1"
+GITHUB_PATH1_NAME = "1路径描述"
+GITHUB_PATH2 = "2"
+GITHUB_PATH2_NAME = "2路径描述"
+
+# 登录认证配置
+LOGIN_USERNAME = "admin"
+LOGIN_PASSWORD = "password123"
+
+# 会话配置（可选）
+SESSION_SECRET = "your-secret-key-here"
+SESSION_MAX_AGE = "3600"
+
+# 或者使用Cloudflare环境变量（推荐用于生产环境）
+# 在Cloudflare Dashboard中设置这些变量
+# [env.production.vars]
+# GITHUB_TOKEN = "{{GITHUB_TOKEN}}"
+# GITHUB_OWNER = "{{GITHUB_OWNER}}"
+# GITHUB_REPO = "{{GITHUB_REPO}}"
+# GITHUB_BRANCH = "{{GITHUB_BRANCH}}"
+# GITHUB_PATH = "{{GITHUB_PATH}}"
