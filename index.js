@@ -323,8 +323,25 @@ export default {
           return await uploadFile(request, env, pathConfig);
         } else if (request.method === 'DELETE') {
           return await deleteFile(request, env, pathConfig);
+        } else if (request.method === 'PUT') {
+          return await updateFile(request, env, pathConfig);
         }
       }
+    }
+    
+    // 处理编辑页面
+    if (url.pathname === '/edit') {
+      const filename = url.searchParams.get('filename');
+      const sha = url.searchParams.get('sha');
+      const filePath = url.searchParams.get('path');
+      
+      if (!filename || !sha || !filePath) {
+        return new Response('缺少必要参数', { status: 400 });
+      }
+      
+      return new Response(getEditFileHTML(filename, sha, filePath, env), {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      });
     }
     
     // 处理下载代理请求
@@ -549,6 +566,81 @@ async function deleteFile(request, env, pathConfig) {
   }
 }
 
+// 修改文件
+async function updateFile(request, env, pathConfig) {
+  try {
+    const { filename, sha, content, message } = await request.json();
+    
+    if (!filename || !sha || !content) {
+      return new Response(JSON.stringify({ error: '缺少必要参数' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    const { GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH } = env;
+    
+    // 构建完整的文件路径
+    const basePath = pathConfig.path || '';
+    const filePath = basePath ? basePath + '/' + filename : filename;
+    
+    // 正确编码文件路径
+    const encodedFilePath = encodeURIComponent(filePath);
+    const url = 'https://api.github.com/repos/' + GITHUB_OWNER + '/' + GITHUB_REPO + '/contents/' + encodedFilePath;
+    
+    // 将内容转换为Base64（正确处理中文）
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(content);
+    let binaryString = '';
+    for (let i = 0; i < bytes.length; i++) {
+        binaryString += String.fromCharCode(bytes[i]);
+    }
+    const contentBase64 = btoa(binaryString);
+    
+    const updateData = {
+      message: message || `Update file: ${filename}`,
+      content: contentBase64,
+      sha: sha,
+      branch: GITHUB_BRANCH
+    };
+    
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${GITHUB_TOKEN}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Cloudflare-Worker'
+      },
+      body: JSON.stringify(updateData)
+    });
+    
+    if (!response.ok) {
+      return new Response(JSON.stringify({ 
+        error: `修改失败: ${response.status}` 
+      }), { 
+        status: response.status,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    return new Response(JSON.stringify({ 
+      success: true, 
+      message: '文件修改成功' 
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      error: `修改错误: ${error.message}` 
+    }), { 
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
 // 下载代理
 async function downloadProxy(request, env) {
   try {
@@ -633,9 +725,16 @@ async function downloadProxy(request, env) {
       responseContent = bytes;
       contentLength = bytes.length.toString();
     } else {
-      // 文本文件：直接使用解码后的字符串
-      responseContent = atob(base64Content);
-      contentLength = responseContent.length.toString();
+      // 文本文件：正确处理中文的Base64解码
+      const binaryString = atob(base64Content);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      // 使用TextDecoder将字节转换为UTF-8字符串
+      const decoder = new TextDecoder('utf-8');
+      responseContent = decoder.decode(bytes);
+      contentLength = (new TextEncoder().encode(responseContent)).length.toString();
     }
     
     // 设置响应头
@@ -724,6 +823,176 @@ function getPathSelectionHTML(pathConfigs) {
 </html>`;
 }
 
+// 文件编辑页面
+function getEditFileHTML(filename, sha, filePath, env) {
+  // 根据文件路径自动识别正确的路径配置
+  const pathConfigs = getPathConfig(env);
+  let pathName = 'default';
+  
+  // 查找文件所属的路径配置
+  for (const config of pathConfigs) {
+    if (config.path && filePath.startsWith(config.path)) {
+      pathName = config.name;
+      break;
+    }
+  }
+  
+  const apiBase = '/api/files/' + pathName;
+  
+  return `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>编辑文件 - ${filename}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+        .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; position: relative; }
+        .back-btn { position: absolute; top: 20px; left: 20px; background: #95a5a6; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; text-decoration: none; }
+        .back-btn:hover { background: #7f8c8d; }
+        .edit-section { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .btn { background: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin: 5px; }
+        .btn:hover { background: #2980b9; }
+        .btn-success { background: #27ae60; }
+        .btn-success:hover { background: #229954; }
+        .btn-warning { background: #f39c12; }
+        .btn-warning:hover { background: #e67e22; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        textarea { font-family: monospace; height: 400px; resize: vertical; }
+        .message { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+        .loading { display: none; text-align: center; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <button class="back-btn" onclick="goBack()">← 返回</button>
+            <h1 style="text-align: center; margin: 0;">编辑文件: ${filename}</h1>
+        </div>
+        
+        <div class="edit-section">
+            <div id="message"></div>
+            <div class="loading" id="loading">加载中...</div>
+            
+            <div class="form-group">
+                <label for="editMessage">提交信息:</label>
+                <input type="text" id="editMessage" value="Update file: ${filename}">
+            </div>
+            
+            <div class="form-group">
+                <label for="editContent">文件内容:</label>
+                <textarea id="editContent" placeholder="正在加载文件内容..."></textarea>
+            </div>
+            
+            <div style="text-align: right;">
+                <button class="btn btn-success" onclick="saveFileChanges()">保存修改</button>
+                <button class="btn" onclick="goBack()">取消</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const filename = '${filename}';
+        const sha = '${sha}';
+        const filePath = '${filePath}';
+        const apiBase = '${apiBase}';
+        
+        // 页面加载时获取文件内容
+        window.addEventListener('DOMContentLoaded', async function() {
+            await loadFileContent();
+        });
+        
+        // 加载文件内容
+        async function loadFileContent() {
+            const loading = document.getElementById('loading');
+            const editContent = document.getElementById('editContent');
+            
+            loading.style.display = 'block';
+            
+            try {
+                const response = await fetch('/api/download?path=' + encodeURIComponent(filePath));
+                
+                if (response.ok) {
+                    const content = await response.text();
+                    editContent.value = content;
+                    showMessage('文件内容加载成功', 'success');
+                } else {
+                    showMessage('获取文件内容失败: ' + response.status, 'error');
+                }
+            } catch (error) {
+                showMessage('加载错误: ' + error.message, 'error');
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+        
+        // 保存文件修改
+        async function saveFileChanges() {
+            const message = document.getElementById('editMessage').value;
+            const content = document.getElementById('editContent').value;
+            
+            if (!message.trim()) {
+                showMessage('请输入提交信息', 'warning');
+                return;
+            }
+            
+            if (!content.trim()) {
+                showMessage('文件内容不能为空', 'warning');
+                return;
+            }
+            
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+            
+            try {
+                const response = await fetch(apiBase, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename, sha, content, message })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showMessage('文件修改成功', 'success');
+                    setTimeout(() => {
+                        goBack();
+                    }, 2000);
+                } else {
+                    showMessage('修改失败: ' + (data.error || response.status), 'error');
+                }
+            } catch (error) {
+                showMessage('保存错误: ' + error.message, 'error');
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+        
+        // 显示消息
+        function showMessage(message, type) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.innerHTML = '<div class="message ' + type + '">' + message + '</div>';
+            setTimeout(() => messageDiv.innerHTML = '', 5000);
+        }
+        
+        // 返回上一页
+        function goBack() {
+            window.history.back();
+        }
+    </script>
+</body>
+</html>
+  `;
+}
+
 // 文件管理界面
 function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
   const apiBase = `/api/files/${currentPathConfig.name}`;
@@ -755,6 +1024,21 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
             
             const extension = filename.split('.').pop().toLowerCase();
             return previewableExtensions.includes(extension);
+        }
+        
+        // 检测文件类型是否支持编辑
+        function isEditableFile(filename) {
+            const editableExtensions = [
+                // 文本文件
+                'txt', 'md', 'html', 'htm', 'xml', 'json', 'js', 'css', 'ts',
+                // 配置文件
+                'yml', 'yaml', 'ini', 'conf', 'properties', 'env', 'toml',
+                // 数据文件
+                'csv', 'log', 'sql'
+            ];
+            
+            const extension = filename.split('.').pop().toLowerCase();
+            return editableExtensions.includes(extension);
         }
         
         // 获取文件预览URL
@@ -914,6 +1198,78 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
         .status.error { background-color: #f8d7da; color: #721c24; }
         .path-nav { margin-top: 15px; }
         .path-nav .btn { background: #95a5a6; margin: 0 5px; }
+        
+        /* 编辑模态框样式 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            width: 80%;
+            max-width: 800px;
+            max-height: 90%;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            color: #2c3e50;
+        }
+        
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #7f8c8d;
+        }
+        
+        .close-btn:hover {
+            color: #e74c3c;
+        }
+        
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        
+        .modal-footer {
+            padding: 20px;
+            border-top: 1px solid #eee;
+            text-align: right;
+        }
+        
+        .btn-warning {
+            background: #f39c12;
+            color: white;
+        }
+        
+        .btn-warning:hover {
+            background: #e67e22;
+        }
+        
         .path-nav .btn.active { background: #3498db; }
         .path-nav .btn:hover { background: #7f8c8d; }
         .path-nav .btn.active:hover { background: #2980b9; }
@@ -1217,6 +1573,15 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
                             downloadBtn.onclick = function() { downloadFile(file.path); };
                             actionCell.appendChild(downloadBtn);
                             
+                            // 修改按钮（仅对可编辑文件显示）
+                            if (isEditableFile(file.name)) {
+                                const editBtn = document.createElement('button');
+                                editBtn.className = 'btn btn-warning';
+                                editBtn.textContent = '修改';
+                                editBtn.onclick = function() { editFile(file.name, file.sha, file.path); };
+                                actionCell.appendChild(editBtn);
+                            }
+                            
                             // 删除按钮
                             const deleteBtn = document.createElement('button');
                             deleteBtn.className = 'btn btn-danger';
@@ -1402,7 +1767,16 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
-
+        
+        // 编辑文件 - 跳转到编辑页面
+        function editFile(filename, sha, filePath) {
+            // 跳转到编辑页面，使用URL参数传递文件信息
+            const editUrl = '/edit?filename=' + encodeURIComponent(filename) + 
+                          '&sha=' + encodeURIComponent(sha) + 
+                          '&path=' + encodeURIComponent(filePath);
+            window.location.href = editUrl;
+        }
+        
         // 登出函数
         function logout() {
             if (confirm('确定要登出吗？')) {

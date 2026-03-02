@@ -14,6 +14,12 @@ GITHUB_PATH2 = "public/assets/history-images"
 GITHUB_PATH2_NAME = "历程"
 GITHUB_PATH3 = "public/assets/leaderboard"
 GITHUB_PATH3_NAME = "排行榜"
+GITHUB_PATH4 = "public/backgrounds"
+GITHUB_PATH4_NAME = "背景图"
+GITHUB_PATH5 = "public/assets/memberlist"
+GITHUB_PATH5_NAME = "白名单"
+GITHUB_PATH6 = "src/config"
+GITHUB_PATH6_NAME = "页面配置"
 
 # 登录认证配置
 LOGIN_USERNAME = "admin"
