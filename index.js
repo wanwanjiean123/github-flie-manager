@@ -648,8 +648,10 @@ async function downloadProxy(request, env) {
       // 预览模式：内联显示，不下载
       headers['Content-Disposition'] = 'inline';
     } else {
-      // 下载模式：强制下载
-      headers['Content-Disposition'] = `attachment; filename="${filename}"`;
+      // 下载模式：强制下载，正确处理中文文件名
+      // 使用更兼容的方法：只使用URL编码的文件名
+      const encodedFilename = encodeURIComponent(filename);
+      headers['Content-Disposition'] = `attachment; filename="${encodedFilename}"`;
     }
     
     // 返回文件内容
@@ -776,7 +778,18 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
                 if (response.ok) {
                     // 获取文件内容和文件名
                     const blob = await response.blob();
-                    const filename = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || filePath.split('/').pop();
+                    
+                    // 解析Content-Disposition头中的文件名
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = filePath.split('/').pop();
+                    
+                    if (contentDisposition) {
+                        const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
+                        if (filenameMatch) {
+                            // 解码URL编码的文件名
+                            filename = decodeURIComponent(filenameMatch[1]);
+                        }
+                    }
                     
                     // 创建Blob URL
                     const blobUrl = URL.createObjectURL(blob);
@@ -789,9 +802,13 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
                     document.body.appendChild(a);
                     a.click();
                     
-                    // 清理
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(blobUrl);
+                    // 清理资源
+                    setTimeout(function() {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(blobUrl);
+                    }, 100);
+                    
+                    showMessage('正在下载: ' + filename, 'success');
                 } else {
                     const errorData = await response.text();
                     showMessage('下载失败: ' + (errorData || response.status), 'error');
@@ -939,12 +956,18 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
         
         <div class="file-list">
             <h2>文件列表</h2>
-            <button class="btn" onclick="loadFiles()">刷新列表</button>
+            <div style="margin-bottom: 15px;">
+                <button class="btn" onclick="loadFiles()">刷新列表</button>
+                <button class="btn btn-success" onclick="batchDownloadFiles()" id="batchDownloadBtn" style="display: none;">批量下载选中文件</button>
+                <button class="btn btn-danger" onclick="batchDeleteFiles()" id="batchDeleteBtn" style="display: none;">批量删除选中文件</button>
+                <span id="selectedCount" style="margin-left: 10px; color: #666; display: none;">已选择 <span id="count">0</span> 个文件</span>
+            </div>
             <div id="message"></div>
             <div class="loading" id="loading">加载中...</div>
             <table id="fileTable">
                 <thead>
                     <tr>
+                        <th style="width: 40px;"><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this.checked)"></th>
                         <th>文件名</th>
                         <th>大小</th>
                         <th>操作</th>
@@ -975,6 +998,172 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
             setTimeout(() => messageDiv.innerHTML = '', 5000);
         }
 
+        // 更新选择状态
+        function updateSelection() {
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            const selectedCount = checkboxes.length;
+            const batchDownloadBtn = document.getElementById('batchDownloadBtn');
+            const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+            const selectedCountSpan = document.getElementById('selectedCount');
+            const countSpan = document.getElementById('count');
+            
+            if (selectedCount > 0) {
+                batchDownloadBtn.style.display = 'inline-block';
+                batchDeleteBtn.style.display = 'inline-block';
+                selectedCountSpan.style.display = 'inline-block';
+                countSpan.textContent = selectedCount;
+            } else {
+                batchDownloadBtn.style.display = 'none';
+                batchDeleteBtn.style.display = 'none';
+                selectedCountSpan.style.display = 'none';
+            }
+        }
+        
+        // 全选/取消全选
+        function toggleSelectAll(checked) {
+            const checkboxes = document.querySelectorAll('.file-checkbox');
+            checkboxes.forEach(function(checkbox) {
+                checkbox.checked = checked;
+            });
+            updateSelection();
+        }
+
+        // 批量下载文件
+        async function batchDownloadFiles() {
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            
+            if (checkboxes.length === 0) {
+                showMessage('请先选择要下载的文件', 'warning');
+                return;
+            }
+            
+            if (!confirm('确定要下载选中的 ' + checkboxes.length + ' 个文件吗？')) {
+                return;
+            }
+            
+            showMessage('开始批量下载 ' + checkboxes.length + ' 个文件...', 'success');
+            
+            // 逐个下载文件
+            for (let i = 0; i < checkboxes.length; i++) {
+                const checkbox = checkboxes[i];
+                const filePath = checkbox.getAttribute('data-path');
+                
+                try {
+                    // 使用后端代理下载文件
+                    const response = await fetch('/api/download?path=' + encodeURIComponent(filePath));
+                    
+                    if (response.ok) {
+                        // 获取文件内容和文件名
+                        const blob = await response.blob();
+                        
+                        // 解析Content-Disposition头中的文件名
+                        const contentDisposition = response.headers.get('Content-Disposition');
+                        let filename = filePath.split('/').pop();
+                        
+                        if (contentDisposition) {
+                            const filenameMatch = contentDisposition.match(/filename="([^"]+)"/);
+                            if (filenameMatch) {
+                                // 解码URL编码的文件名
+                                filename = decodeURIComponent(filenameMatch[1]);
+                            }
+                        }
+                        
+                        // 创建Blob URL
+                        const blobUrl = URL.createObjectURL(blob);
+                        
+                        // 创建下载链接
+                        const a = document.createElement('a');
+                        a.href = blobUrl;
+                        a.download = filename;
+                        a.style.display = 'none';
+                        document.body.appendChild(a);
+                        a.click();
+                        
+                        // 清理资源
+                        setTimeout(function() {
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(blobUrl);
+                        }, 100);
+                        
+                        showMessage('正在下载: ' + filename, 'success');
+                    } else {
+                        showMessage('下载失败: ' + filePath, 'error');
+                    }
+                } catch (error) {
+                    showMessage('下载错误: ' + error.message, 'error');
+                }
+                
+                // 添加延迟避免同时下载过多文件
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            
+            showMessage('批量下载完成', 'success');
+        }
+        
+        // 批量删除文件
+        async function batchDeleteFiles() {
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            
+            if (checkboxes.length === 0) {
+                showMessage('请先选择要删除的文件', 'warning');
+                return;
+            }
+            
+            if (!confirm('确定要删除选中的 ' + checkboxes.length + ' 个文件吗？此操作不可撤销！')) {
+                return;
+            }
+            
+            showMessage('开始批量删除 ' + checkboxes.length + ' 个文件...', 'success');
+            
+            let successCount = 0;
+            let errorCount = 0;
+            
+            // 逐个删除文件
+            for (let i = 0; i < checkboxes.length; i++) {
+                const checkbox = checkboxes[i];
+                const filename = checkbox.value;
+                const sha = checkbox.getAttribute('data-sha');
+                
+                try {
+                    const response = await fetch('${apiBase}', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filename, sha })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        successCount++;
+                        showMessage('删除成功: ' + filename, 'success');
+                    } else {
+                        errorCount++;
+                        showMessage('删除失败: ' + filename + ': ' + (data.error || response.status), 'error');
+                    }
+                } catch (error) {
+                    errorCount++;
+                    showMessage('删除错误: ' + filename + ': ' + error.message, 'error');
+                }
+                
+                // 添加延迟避免API限制
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
+            // 显示最终结果
+            let resultMessage = '批量删除完成: ';
+            if (successCount > 0) {
+                resultMessage += successCount + ' 个文件删除成功';
+            }
+            if (errorCount > 0) {
+                resultMessage += (successCount > 0 ? ', ' : '') + errorCount + ' 个文件删除失败';
+            }
+            
+            showMessage(resultMessage, successCount > 0 && errorCount === 0 ? 'success' : 'warning');
+            
+            // 刷新文件列表
+            loadFiles();
+        }
+
         // 加载文件列表
         async function loadFiles() {
             const loading = document.getElementById('loading');
@@ -992,6 +1181,17 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
                         data.files.forEach(file => {
                             const row = tableBody.insertRow();
                             
+                            // 选择复选框
+                            const selectCell = row.insertCell();
+                            const checkbox = document.createElement('input');
+                            checkbox.type = 'checkbox';
+                            checkbox.className = 'file-checkbox';
+                            checkbox.value = file.name;
+                            checkbox.setAttribute('data-sha', file.sha);
+                            checkbox.setAttribute('data-path', file.path);
+                            checkbox.onchange = function() { updateSelection(); };
+                            selectCell.appendChild(checkbox);
+                            
                             // 安全地创建DOM元素，避免innerHTML的XSS风险
                             const nameCell = row.insertCell();
                             nameCell.textContent = file.name;
@@ -1006,7 +1206,7 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
                                 const viewBtn = document.createElement('button');
                                 viewBtn.className = 'btn btn-success';
                                 viewBtn.textContent = '查看';
-                                viewBtn.onclick = () => previewFile(file.path);
+                                viewBtn.onclick = function() { previewFile(file.path); };
                                 actionCell.appendChild(viewBtn);
                             }
                             
@@ -1014,14 +1214,14 @@ function getFileManagerHTML(currentPathConfig, allPathConfigs, env) {
                             const downloadBtn = document.createElement('button');
                             downloadBtn.className = 'btn';
                             downloadBtn.textContent = '下载';
-                            downloadBtn.onclick = () => downloadFile(file.path);
+                            downloadBtn.onclick = function() { downloadFile(file.path); };
                             actionCell.appendChild(downloadBtn);
                             
                             // 删除按钮
                             const deleteBtn = document.createElement('button');
                             deleteBtn.className = 'btn btn-danger';
                             deleteBtn.textContent = '删除';
-                            deleteBtn.onclick = () => deleteFile(escapeHtml(file.name), escapeHtml(file.sha));
+                            deleteBtn.onclick = function() { deleteFile(escapeHtml(file.name), escapeHtml(file.sha)); };
                             actionCell.appendChild(deleteBtn);
                         });
                     } else {
